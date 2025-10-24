@@ -1,0 +1,7 @@
+{
+  "source_file": "data\\pdfs\\test_1.pdf",
+  "extracted_at": "2025-10-23 13:57:59",
+  "method": "pdfplumber",
+  "pages": 1,
+  "chars": 14
+}

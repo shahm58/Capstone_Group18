@@ -1,0 +1,7 @@
+{
+  "source_file": "data\\pdfs\\RBC-2024-sustainability-report.pdf",
+  "extracted_at": "2025-10-24 12:01:56",
+  "method": "pdfplumber",
+  "pages": 152,
+  "chars": 504821
+}
