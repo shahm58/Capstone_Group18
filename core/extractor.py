@@ -3,7 +3,6 @@ from pathlib import Path
 import fitz  # PyMuPDF
 import pdfplumber
 import pandas as pd
-import pandas as pd
 import re
 
 _digit_re = re.compile(r"\d")
@@ -18,24 +17,17 @@ def _digit_ratio(s: str) -> float:
 def _is_table_like(df: pd.DataFrame, min_cols=3, min_rows=2, min_digit_ratio=0.15) -> bool:
     if df is None or df.shape[0] < min_rows or df.shape[1] < min_cols:
         return False
-    # drop fully empty rows/cols
     df = df.dropna(how="all").dropna(axis=1, how="all")
     if df.shape[0] < min_rows or df.shape[1] < min_cols:
         return False
 
-    # compute digit ratio across sample of cells
     sample = df.astype(str).stack().tolist()
     if not sample:
         return False
-    # take up to 200 cells for speed
     sample = sample[:200]
     ratio = sum(_digit_re.search(x) is not None for x in sample) / len(sample)
-
-    # also avoid single-character scatter
     avg_len = sum(len(x.strip()) for x in sample) / len(sample)
-
     return (ratio >= min_digit_ratio) and (avg_len >= 2)
-
 
 
 def _text_via_pdfplumber(pdf_path: Path) -> str:
@@ -45,6 +37,7 @@ def _text_via_pdfplumber(pdf_path: Path) -> str:
             txt = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
             parts.append(txt)
     return "\n".join(parts).strip()
+
 
 def _text_via_pymupdf_words(pdf_path: Path) -> str:
     lines_out = []
@@ -62,7 +55,12 @@ def _text_via_pymupdf_words(pdf_path: Path) -> str:
             lines_out.append("")
     return "\n".join(lines_out).strip()
 
+
 def extract_text(pdf_path: Path) -> dict:
+    """
+    Extracts text from a PDF using pdfplumber first; if fragmented, uses PyMuPDF.
+    Returns a dict with keys: text, method, chars, pages.
+    """
     text = _text_via_pdfplumber(pdf_path)
     method = "pdfplumber"
 
@@ -85,6 +83,7 @@ def extract_text(pdf_path: Path) -> dict:
         pass
 
     return {"text": text, "method": method, "chars": len(text), "pages": pages}
+
 
 # ---------------- TABLES ----------------
 def _tables_via_pdfplumber(pdf_path: Path) -> list[dict]:
@@ -136,18 +135,16 @@ def _tables_via_pdfplumber(pdf_path: Path) -> list[dict]:
                         df.columns = df.iloc[0]
                         df = df[1:].reset_index(drop=True)
 
-                # Drop fully empty rows/cols
                 df = df.dropna(how="all").dropna(axis=1, how="all")
                 if df.shape[0] == 0 or df.shape[1] == 0:
                     continue
-                
-                # Skip if not table-like
+
                 if not _is_table_like(df):
                     continue
 
-
                 out.append({"page": pageno, "index": idx, "df": df})
     return out
+
 
 def _tables_via_camelot(pdf_path: Path) -> list[dict]:
     """
@@ -159,27 +156,24 @@ def _tables_via_camelot(pdf_path: Path) -> list[dict]:
         return []
 
     out: list[dict] = []
-    # Try lattice (ruled tables); fallback to stream (whitespace tables)
     for flavor in ("lattice", "stream"):
         try:
-            # pages="all" works; you can restrict to ranges like "1-5,8"
             tables = camelot.read_pdf(str(pdf_path), pages="all", flavor=flavor)
             for i, t in enumerate(tables, start=1):
                 df = t.df
                 df = df.dropna(how="all").dropna(axis=1, how="all")
                 if df.shape[0] and df.shape[1]:
-                    # Camelot doesn't expose page per row; attribute exists on t.parsing_report
                     page_no = t.parsing_report.get("page", None)
                 if not _is_table_like(df):
                     continue
 
-                    
-                    out.append({"page": page_no or -1, "index": i, "df": df})
+                out.append({"page": page_no or -1, "index": i, "df": df})
             if out:
                 break
         except Exception:
             continue
     return out
+
 
 def extract_tables(pdf_path: Path) -> list[dict]:
     """
@@ -192,3 +186,27 @@ def extract_tables(pdf_path: Path) -> list[dict]:
         if camelot_tbls:
             tables = camelot_tbls
     return tables
+
+
+# --------------------------------------------------------------
+# ✅ Wrapper functions for main.py compatibility
+# --------------------------------------------------------------
+
+def extract_text_from_pdf(pdf_path: Path):
+    """
+    Wrapper around extract_text() so main.py can import this safely.
+    Returns (text, info_dict)
+    """
+    result = extract_text(pdf_path)
+    return result["text"], {
+        "method": result["method"],
+        "chars": result["chars"],
+        "pages": result["pages"],
+    }
+
+
+def extract_tables_from_pdf(pdf_path: Path):
+    """
+    Wrapper around extract_tables() so main.py can import this safely.
+    """
+    return extract_tables(pdf_path)
