@@ -9,7 +9,8 @@ This script orchestrates the full pipeline:
   5. Extracts basic Scope 1 and Scope 2 metrics (Bronze-level)
   6. Outputs summary CSVs for verification
 """
-
+import json
+from core.ai import run_ai_for_document
 import csv
 from pathlib import Path
 from datetime import datetime
@@ -103,11 +104,60 @@ def process_one(pdf_path: Path):
     save_tables_as_csv(pdf_path, tables)
     print(f"   • Extracted and saved {n_tables} tables")
 
+    # 5. (NEW) Prepare minimal extracted JSON for the AI hop and run closed-loop LLM
+    #    Shape expected by core/ai_extractor.shortlist_snippets():
+    #      { "pages": [ { "page": <int>, "lines": [..], "tables": [ [row..], ... ] } ] }
+    extracted_dir = Path("data/extracted")
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+    extracted_json_path = extracted_dir / f"{pdf_path.stem}.json"
+
+    # Minimal but sufficient: put all cleaned lines as page 1 + include first few table rows
+    extracted_payload = {
+        "pages": [
+            {
+                "page": 1,
+                "lines": [ln for ln in cleaned.splitlines() if ln.strip()],
+                "tables": [
+                    # flatten each table to simple rows of strings; keep it small
+                    [str(c) if c is not None else "" for c in row]
+                    for tbl in tables for row in (tbl[:5] if isinstance(tbl, list) else [])
+                ]
+            }
+        ]
+    }
+    with open(extracted_json_path, "w", encoding="utf-8") as f:
+        json.dump(extracted_payload, f, ensure_ascii=False, indent=2)
+
+    # Call the AI extractor (provider/env set outside: PROVIDER=ollama, API_BASE=http://localhost:11434, MODEL=your_model)
+    try:
+        ai_result = run_ai_for_document(pdf_path.stem, extracted_json_path)
+        # Optional: surface a couple of values to the console for confidence while keeping Bronze summary unchanged
+        print(f"   • AI metrics count: {len(ai_result.get('metrics', []))} (see data/output/{pdf_path.stem}.json/.csv)")
+    except Exception as e:
+        print(f"   • AI step skipped due to error: {e}")
+
+
     # 5. ✅ Bronze: Extract basic Scope 1 & 2 metrics using regex
     scope = extract_scope_metrics(cleaned)
     scope1 = scope.get("Scope 1")
     scope2 = scope.get("Scope 2")
     print(f"   • Parsed metrics → Scope 1: {scope1}, Scope 2: {scope2}")
+
+        # 6. Return summary for logs and CSV
+    return {
+        "file": pdf_path.name,
+        "method": info["method"],
+        "pages": info["pages"],
+        "chars": info["chars"],
+        "clean_chars": len(cleaned),
+        "is_blank": len(cleaned.strip()) == 0,
+        "tables": n_tables,
+        "scope1": scope1,
+        "scope2": scope2,
+        # NEW: include AI metric count in the run log if available
+        "ai_metrics": (len(ai_result.get("metrics", [])) if isinstance(ai_result, dict) else 0) if "ai_result" in locals() else 0,
+    }
+
 
     # 6. Return summary for logs and CSV
     return {
