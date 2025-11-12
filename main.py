@@ -94,7 +94,7 @@ def process_one(pdf_path: Path):
 
     # 3. Save raw + cleaned text for inspection
     save_raw_text(pdf_path, text)
-    save_cleaned_text(pdf_path, cleaned)
+    save_clean_text(pdf_path, cleaned)
     print("   • Saved raw and cleaned text")
 
     # 4. Extract tables (optional for Bronze but good for future Silver/Gold)
