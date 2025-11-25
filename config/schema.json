@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ESGReport",
+  "type": "object",
+  "required": ["company_name", "report_year", "metrics", "source_file"],
+  "properties": {
+    "company_name": {
+      "type": "string"
+    },
+    "report_year": {
+      "type": "integer",
+      "minimum": 2000,
+      "maximum": 2030
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "extracted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "scope_1_emissions": { "type": "number", "minimum": 0 },
+        "scope_2_emissions": { "type": "number", "minimum": 0 },
+        "scope_3_emissions": { "type": ["number", "null"], "minimum": 0 },
+        "production_volume": { "type": ["number", "null"], "minimum": 0 },
+        "methodology": { "type": ["string", "null"] }
+      },
+      "required": ["scope_1_emissions", "scope_2_emissions"]
+    }
+  },
+  "additionalProperties": false
+}

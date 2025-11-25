@@ -22,6 +22,15 @@ from core.storage import save_raw_text, save_clean_text, save_tables_as_csv
 from core.metrics import extract_scope_metrics  # ✅ NEW: import rule-based metric extractor
 from core.utils import LOGS_DIR, OUTPUT_DIR, ts
 
+from core.validator import ESGValidator
+from core.storage import StorageManager
+
+from core.metrics import extract_scope_combined
+
+# Initialize validator & storage
+validator = ESGValidator(schema_path="config/schema.json")
+storage = StorageManager(output_dir=OUTPUT_DIR)
+
 # -----------------------------------------------------------
 # Utility Functions
 # -----------------------------------------------------------
@@ -81,6 +90,8 @@ def process_one(pdf_path: Path):
       - Clean text
       - Save outputs
       - Parse Scope 1 & Scope 2 metrics (Bronze)
+      - Validate ESG metrics
+      - Save JSON + CSV of validated report
     """
     print(f"\n🚀 Processing {pdf_path.name} ...")
 
@@ -88,28 +99,57 @@ def process_one(pdf_path: Path):
     text, info = extract_text_from_pdf(pdf_path)
     print(f"   • Extracted text ({info['pages']} pages, {info['chars']} chars)")
 
-    # 2. Clean text for consistent parsing
+    # 2. Clean text
     cleaned = clean_text(text)
     print(f"   • Cleaned text length: {len(cleaned)}")
 
-    # 3. Save raw + cleaned text for inspection
+    # 3. Save raw + cleaned text
     save_raw_text(pdf_path, text)
     save_clean_text(pdf_path, cleaned)
     print("   • Saved raw and cleaned text")
 
-    # 4. Extract tables (optional for Bronze but good for future Silver/Gold)
+    # 4. Extract tables
     tables = extract_tables_from_pdf(pdf_path)
     n_tables = len(tables)
     save_tables_as_csv(pdf_path, tables)
     print(f"   • Extracted and saved {n_tables} tables")
 
-    # 5. ✅ Bronze: Extract basic Scope 1 & 2 metrics using regex
-    scope = extract_scope_metrics(cleaned)
-    scope1 = scope.get("Scope 1")
-    scope2 = scope.get("Scope 2")
+    # 5. NEW: Extract Scope 1 & 2 using TABLES first, regex second
+    scopes = extract_scope_combined(cleaned, tables)
+    scope1 = scopes["Scope 1"]
+    scope2 = scopes["Scope 2"]
+
     print(f"   • Parsed metrics → Scope 1: {scope1}, Scope 2: {scope2}")
 
-    # 6. Return summary for logs and CSV
+    # 6. Prepare report dict for validation
+    report_dict = {
+        "company_name": pdf_path.stem,
+        "report_year": 2024,  # Placeholder, ideally extracted from text
+        "metrics": {
+            "scope_1_emissions": scope1,
+            "scope_2_emissions": scope2,
+            "scope_3_emissions": None,  # Extend later
+            "production_volume": None,
+            "methodology": None
+        },
+        "source_file": str(pdf_path),
+        "extracted_at": ts()
+    }
+
+    # 7. Validate ESG report
+    is_valid, errors = validator.validate_report(report_dict)
+    if is_valid:
+        print("   • ✅ ESG metrics validated against schema")
+    else:
+        print(f"   • ⚠️ Validation failed: {errors}")
+
+    # 8. Save validated report
+    filename_base = pdf_path.stem
+    storage.save_json(report_dict, filename_base)
+    storage.save_csv(report_dict, filename_base)
+    print(f"   • Saved validated ESG report: {filename_base}.json / .csv")
+
+    # 9. Return summary for logs
     return {
         "file": pdf_path.name,
         "method": info["method"],

@@ -19,6 +19,8 @@ pdf_processor/                       # 🔹 Root project folder (name can match 
 │   ├── 📄 storage.py                 # Saves results to CSV/DB
 │   ├── 📄 utils.py                   # Helper functions (logging, file ops, etc.)
 │   └── 📄 ocr.py                     # Handles scanned PDFs (optional, OCR)
+│   └── 📄 validator.py               # JSON Schema validator
+│   └── 📄 metrics.py                 # Extracts ESG metrics (Scope 1 & 2)
 │
 ├── 📂 config/                        # Configuration files and settings
 │   ├── 📄 settings.yaml              # Paths, extraction options, etc.

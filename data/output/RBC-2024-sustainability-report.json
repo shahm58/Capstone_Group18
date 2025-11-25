@@ -1,0 +1,13 @@
+{
+  "company_name": "RBC-2024-sustainability-report",
+  "report_year": 2024,
+  "metrics": {
+    "scope_1_emissions": 1.0,
+    "scope_2_emissions": 1.0,
+    "scope_3_emissions": null,
+    "production_volume": null,
+    "methodology": null
+  },
+  "source_file": "data\\pdfs\\RBC-2024-sustainability-report.pdf",
+  "extracted_at": "2025-11-25_18-15-54"
+}
