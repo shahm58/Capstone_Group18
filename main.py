@@ -17,7 +17,7 @@ from datetime import datetime
 
 # Core modules
 from core.loader import list_pdfs
-from core.extractor import extract_text_from_pdf, extract_tables_from_pdf
+from core.extractor import extract_text_from_pdf, extract_tables_from_pdf, extract_text_by_page # <--- IMPORT NEW FUNCTION
 from core.cleaner import clean_text
 from core.storage import save_raw_text, save_clean_text, save_tables_as_csv
 from core.metrics import extract_scope_metrics  # ✅ NEW: import rule-based metric extractor
@@ -77,11 +77,6 @@ def save_scope_summary(results: list[dict]):
 def process_one(pdf_path: Path):
     """
     Orchestrates the full extraction process for a single PDF file.
-    Steps:
-      - Extract raw text and tables
-      - Clean text
-      - Save outputs
-      - Parse Scope 1 & Scope 2 metrics (Bronze)
     """
     print(f"\n🚀 Processing {pdf_path.name} ...")
 
@@ -89,61 +84,80 @@ def process_one(pdf_path: Path):
     text, info = extract_text_from_pdf(pdf_path)
     print(f"   • Extracted text ({info['pages']} pages, {info['chars']} chars)")
 
-    # 2. Clean text for consistent parsing
+    # 2. Clean text
     cleaned = clean_text(text)
-    print(f"   • Cleaned text length: {len(cleaned)}")
-
-    # 3. Save raw + cleaned text for inspection
+    
+    # 3. Save raw + cleaned
     save_raw_text(pdf_path, text)
     save_clean_text(pdf_path, cleaned)
-    print("   • Saved raw and cleaned text")
 
-    # 4. Extract tables (optional for Bronze but good for future Silver/Gold)
+    # 4. Extract tables
     tables = extract_tables_from_pdf(pdf_path)
     n_tables = len(tables)
     save_tables_as_csv(pdf_path, tables)
     print(f"   • Extracted and saved {n_tables} tables")
 
-    # 5. (NEW) Prepare minimal extracted JSON for the AI hop and run closed-loop LLM
-    #    Shape expected by core/ai_extractor.shortlist_snippets():
-    #      { "pages": [ { "page": <int>, "lines": [..], "tables": [ [row..], ... ] } ] }
+    # 5. Prepare JSON for AI (CORRECTED STRUCTURE)
     extracted_dir = Path("data/extracted")
     extracted_dir.mkdir(parents=True, exist_ok=True)
     extracted_json_path = extracted_dir / f"{pdf_path.stem}.json"
 
-    # Minimal but sufficient: put all cleaned lines as page 1 + include first few table rows
-    extracted_payload = {
-        "pages": [
-            {
-                "page": 1,
-                "lines": [ln for ln in cleaned.splitlines() if ln.strip()],
-                "tables": [
-                    # flatten each table to simple rows of strings; keep it small
-                    [str(c) if c is not None else "" for c in row]
-                    for tbl in tables for row in (tbl[:5] if isinstance(tbl, list) else [])
-                ]
-            }
-        ]
-    }
+    # Get text page-by-page
+    raw_pages = extract_text_by_page(pdf_path)
+    
+    pages_payload = []
+    for i, page_text in enumerate(raw_pages):
+        # Basic cleaning for the AI input
+        lines = [ln.strip() for ln in page_text.splitlines() if ln.strip()]
+        if not lines: 
+            continue
+            
+        pages_payload.append({
+            "page": i + 1,
+            "lines": lines,
+            # We leave tables empty or minimal since you confirmed they are garbage
+            "tables": [] 
+        })
+
+    extracted_payload = {"pages": pages_payload}
+
     with open(extracted_json_path, "w", encoding="utf-8") as f:
         json.dump(extracted_payload, f, ensure_ascii=False, indent=2)
 
-    # Call the AI extractor (provider/env set outside: PROVIDER=ollama, API_BASE=http://localhost:11434, MODEL=your_model)
+    # 6. Run AI and CAPTURE the results
+    scope1 = None
+    scope2 = None
+    ai_metrics_count = 0
+
     try:
+        print("   • 🤖 Invoking AI extraction...")
         ai_result = run_ai_for_document(pdf_path.stem, extracted_json_path)
-        # Optional: surface a couple of values to the console for confidence while keeping Bronze summary unchanged
-        print(f"   • AI metrics count: {len(ai_result.get('metrics', []))} (see data/output/{pdf_path.stem}.json/.csv)")
+        metrics = ai_result.get("metrics", [])
+        ai_metrics_count = len(metrics)
+        
+        # Extract Scope 1
+        s1 = next((m for m in metrics if m["name"] == "Scope 1"), None)
+        if s1: scope1 = s1["value"]
+
+        # Extract Scope 2 (Prefer Market, then Location)
+        s2 = next((m for m in metrics if m["name"] == "Scope 2 (market)"), None)
+        if not s2:
+            s2 = next((m for m in metrics if m["name"] == "Scope 2 (location)"), None)
+        if s2: scope2 = s2["value"]
+
+        print(f"   • AI found: Scope 1={scope1}, Scope 2={scope2}")
+
     except Exception as e:
-        print(f"   • AI step skipped due to error: {e}")
+        print(f"   • AI step failed: {e}")
 
+    # 7. Fallback to Regex ONLY if AI failed (Optional - currently disabled to prevent bad data)
+    if scope1 is None and scope2 is None:
+        print("   • AI found no metrics. Skipping regex fallback to avoid false positives.")
+        # If you really want regex fallback, uncomment below:
+        # scope = extract_scope_metrics(cleaned)
+        # scope1 = scope.get("Scope 1")
+        # scope2 = scope.get("Scope 2")
 
-    # 5. ✅ Bronze: Extract basic Scope 1 & 2 metrics using regex
-    scope = extract_scope_metrics(cleaned)
-    scope1 = scope.get("Scope 1")
-    scope2 = scope.get("Scope 2")
-    print(f"   • Parsed metrics → Scope 1: {scope1}, Scope 2: {scope2}")
-
-        # 6. Return summary for logs and CSV
     return {
         "file": pdf_path.name,
         "method": info["method"],
@@ -154,22 +168,7 @@ def process_one(pdf_path: Path):
         "tables": n_tables,
         "scope1": scope1,
         "scope2": scope2,
-        # NEW: include AI metric count in the run log if available
-        "ai_metrics": (len(ai_result.get("metrics", [])) if isinstance(ai_result, dict) else 0) if "ai_result" in locals() else 0,
-    }
-
-
-    # 6. Return summary for logs and CSV
-    return {
-        "file": pdf_path.name,
-        "method": info["method"],
-        "pages": info["pages"],
-        "chars": info["chars"],
-        "clean_chars": len(cleaned),
-        "is_blank": len(cleaned.strip()) == 0,
-        "tables": n_tables,
-        "scope1": scope1,
-        "scope2": scope2,
+        "ai_metrics": ai_metrics_count,
     }
 
 

@@ -210,3 +210,31 @@ def extract_tables_from_pdf(pdf_path: Path):
     Wrapper around extract_tables() so main.py can import this safely.
     """
     return extract_tables(pdf_path)
+
+# ADD THIS NEW FUNCTION TO RETURN TEXT PER PAGE
+def extract_text_by_page(pdf_path: Path) -> list[str]:
+    """
+    Extracts text page-by-page.
+    Returns a list of strings, where index 0 is Page 1, etc.
+    """
+    pages_text = []
+    
+    # Try pdfplumber first (better layout preservation)
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                txt = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+                pages_text.append(txt)
+    except Exception:
+        pages_text = []
+
+    # If pdfplumber failed or returned empty strings, try PyMuPDF
+    if not pages_text or all(not p.strip() for p in pages_text):
+        pages_text = []
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                # "blocks" is usually better than "words" for keeping lines together
+                text = page.get_text("text") 
+                pages_text.append(text)
+                
+    return pages_text
